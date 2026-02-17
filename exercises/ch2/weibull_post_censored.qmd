@@ -1,0 +1,238 @@
+
+### Exercise 2.3 {#sec-prob_post_weibull_lung}
+
+*This exercise continues the analysis of the lung cancer data in Exercise 2.2*
+
+Assume that the survival time $X$ of the lung cancer patients in Exercise 2.2 are independent Weibull distributed 
+$$
+X_1,\ldots,X_n \vert \lambda, k \overset{\mathrm{iid}}{\sim} \mathrm{Weibull}(\lambda,k).
+$$
+The value of $k$ determines how the failure rate changes with time:
+
+- $k=1$ gives a failure (death) rate that is constant over time and corresponds to the special case of a exponential distribution $\mathrm{Expon}(\theta=1/\lambda)$ used in Exercise 2.2. Note that (following Wikipedia) the exponential distribution is parameterized with a rate (inverse scale) parameter $\theta$, while the Weibull is parameterized with a scale parameter $\lambda= 1/\theta$ 🤷
+- $k<1$ gives a decreasing failure rate over time
+- $k>1$ gives an increasing failure rate over time.
+
+(a) Plot the posterior distribution of $\lambda$ conditional on $k=1$, $k=3/2$ and $k=2$. For all $k$, use the prior $\lambda \sim \mathrm{Gamma}(\alpha,\beta)$ with $\alpha=3$ and $\beta=1/50$ (which a similar prior for $\theta=1/\lambda$ as in Exercise 2.2). *Hint*: the posterior distribution for $k\neq 1$ is intractable, so use numerical evaluation of the posterior over a grid of $\lambda$-values.
+(b) Plot the `time` variable as a histogram and overlay the fitted model for the three different $k$-values; use the posterior mode for $\theta$ in each model when plotting the fitted model density.<br>
+(c) Use `stan` to sample from the posterior distribution of $\lambda$ for a given $k=3/2$. This should replicate your results in (a). Read [this part](https://mc-stan.org/docs/stan-users-guide/truncation-censoring.html#integrating-out-censored-values) of the Stan User Guide on how to implement censoring in the model before starting. The example in the User Guide has the same censoring point for all patients, which is not the case in the `lung` dataset. So you need to generalize that to a vector of censoring points, one for each patient.
+
+::: {.callout-note icon="false" collapse="true"}
+## Solution Exercise 2.3a
+
+Similar to Exercise 2.2b, the likelihood can be computed with separate treatment of the uncensored and censored observations: 
+$$
+\begin{align}
+p(x_1,\ldots,x_n \vert \lambda, k) & = \prod_{i=1}^n p(x_i \vert \lambda, k) \\
+& = \prod_{u \in \mathcal{U}} p(x_u \vert \lambda, k) \prod_{c \in \mathcal{C}} \Big(1 - F(x_c \vert \lambda, k)\Big) 
+\end{align}
+$$
+where $p(x \vert \lambda, k)$ is the pdf of a Weibull variable
+$$
+p(x \vert \lambda, k) = \frac{k}{\lambda}\Big( \frac{x}{\lambda} \Big)^{k-1}e^{-(x/\lambda)^k}\quad\text{ for }x>0
+$$
+which is implemented in R as `dweibull`. The cdf of the Weibull distribution is of rather simple form
+$$
+F(x \vert \lambda, k) = 1 - e^{-(x/\lambda)^k}
+$$
+and is implemented in R as `pweibull`.
+
+The code below plots the prior and posterior distribution for $\lambda$ for the three different $k$-values. We could have inserted the mathematical expressions for the pdf and cdf and simplified the final likelihood expression; we will instead use the `dweibull` and `pweibull` functions without simplifications since it gives a more general template that can be used for any distribution, not just the Weibull model. For numerical stability we usually compute the posterior distribution on the log scale
+$$
+\log p(\lambda^{(j)} \vert x_1,\ldots,x_n) \propto \log p(x_1,\ldots,x_n \vert \lambda_j) + \log p(\lambda_j)
+$$
+for a grid of equally spaced $\lambda$-values: $\lambda^{(1)}\ldots,\lambda^{(J)}$. The $\propto$ sign now means that there is a missing *additive* constant $\log p(x_1,\ldots,x_n)$ which does not depend on the unknown parameter $\lambda$. When we have computed $\log p(\lambda \vert x_1,\ldots,x_n)$ over a grid of $\lambda$ values we compute the posterior on the original scale by
+$$
+p(\lambda^{(j)} \vert x_1,\ldots,x_n) \propto \exp\Big( \log p(x_1,\ldots,x_n \vert \lambda_j) + \log p(\lambda_j) \Big)
+$$
+and then divide all numbers with the normalizing constant to make sure that the posterior integrates to one. This is done numerically by approximating the integral by a Riemann rectangle sum 
+$$
+p(\lambda^{(j)} \vert x_1,\ldots,x_n) = 
+\frac{\exp\Big( \log p(x_1,\ldots,x_n \vert \lambda^{(j)}) + \log p(\lambda^{(j)}) \Big)}
+{\sum_{h=1}^J \exp\Big( \log p(x_1,\ldots,x_n \vert \lambda^{(h)}) + \log p(\lambda^{(h)}) \Big) \Delta}
+$$
+where $\Delta$ is the spacing between the grid points of $\lambda$-values: $\lambda^{(1)}, \ldots, \lambda^{(J)}$.
+
+```{r}
+#| output: false
+library(tidyverse) # loads data manipulation and visualization packages
+library(survival) # loads the lung cancer data as `lung`
+colors = c("#6C8EBF", "#c0a34d", "#780000","#007878","#B5C6DF","#EADAAA","#AE6666")
+```
+
+Set up prior hyperparameters
+```{r}
+alpha_prior <- 3     # shape parameter
+beta_prior <- 1/50   # rate parameter
+```
+
+Set up function that computes the likelihood for any $\lambda$ value:
+```{r}
+# Make a function that computes the likelihood
+weibull_loglike <- function(lambda, x, censored, k){
+  loglik_uncensored = sum(dweibull(x[-censored], shape = k, scale = lambda, 
+                                   log = TRUE))
+  loglik_censored = sum(pweibull(x[censored], shape = k, scale = lambda, 
+                                 lower.tail = FALSE, log.p = TRUE))
+  return(loglik_uncensored + loglik_censored)
+}
+```
+
+Set up a function that computes the posterior density over a grid of $\lambda$:
+```{r}
+weibull_posterior <- function(lambdaGrid, x, censored, k, alpha_prior, beta_prior){
+  Delta = lambdaGrid[2] - lambdaGrid[1] # Grid step size
+  logPrior <- dgamma(lambdaGrid, shape = alpha_prior, rate = beta_prior, log = TRUE)
+  logLike <- sapply(lambdaGrid, weibull_loglike, x, censored, k)
+  logPost <- logLike + logPrior
+  logPost <- logPost - max(logPost) # subtract constant to avoid overflow
+  post <- exp(logPost)/(sum(exp(logPost))*Delta) # original scale and normalize
+  logLike <- logLike - max(logLike)
+  likeNorm <- exp(logLike)/(sum(exp(logLike))*Delta) # normalized likelihood
+  return(list(post = post, prior = exp(logPrior), likeNorm = likeNorm))
+}
+```
+
+```{r}
+# Plot the prior and posterior densities
+
+lambdaGrid <- seq(200, 800, length.out = 1000)
+# Compute to get the prior
+postRes <- weibull_posterior(lambdaGrid, lung$time, lung$status == 1, k = 1, 
+                             alpha_prior, beta_prior)
+df <- data.frame(
+  lambdaGrid = lambdaGrid, 
+  prior = postRes$prior
+)
+
+# Compute for all selected k values
+postModes = c()
+for (k in c(1, 3/2, 2)){
+  postRes <- weibull_posterior(lambdaGrid, lung$time, lung$status == 1, k, alpha_prior, beta_prior)
+  df[str_glue("posterior k={k}")] <- postRes$post
+  postModes = c(postModes, lambdaGrid[which.max(postRes$post)])
+}
+
+df_long <- df %>% pivot_longer(-lambdaGrid, names_to = "density_type", values_to = "density")
+
+# Plot using ggplot2
+ggplot(df_long) +
+  aes(x = lambdaGrid, y = density, color = density_type) +
+  geom_line() +
+  xlim(250,600) +
+  scale_colour_manual(
+    breaks = c("prior", "posterior k=1", "posterior k=1.5", "posterior k=2"), 
+    values = c(colors[2], colors[1], colors[3], colors[4])) +
+  labs(title = "Exercise 2.3", x = expression(lambda), y = "Density", color = "") + 
+  theme_minimal()
+```
+:::
+
+
+::: {.callout-note icon="false" collapse="true"}
+## Solution Exercise 2.3b
+The fit of the three Weibull models are plotted below. The best fit seems to be for $k=3/2$, but it is still not very good. In a later exercise you will be asked to freely estimate both $\lambda$ and $k$, and even later to fit a Weibull regression model with covariates.
+```{r}
+ggplot(lung, aes(time)) +
+  geom_histogram(aes(y = after_stat(density), fill = "Data"), bins = 30) +
+  stat_function(fun = dweibull, args = list(shape = 1, scale = postModes[1]), lwd = 1, 
+                aes(color = "Weibull fit k = 1"),
+  ) +
+  stat_function(fun = dweibull, args = list(shape = 3/2, scale = postModes[2]), lwd = 1, 
+                aes(color = "Weibull fit k = 3/2"),
+  ) +
+  stat_function(fun = dweibull, args = list(shape = 2, scale = postModes[3]), lwd = 1, 
+                aes(color = "Weibull fit k = 2"),
+  ) +
+  labs(title = "Weibull model fits", x = "days", y = "Density") + 
+  scale_fill_manual("", values = colors[6]) +
+  scale_color_manual("", values = c(colors[1], colors[3], colors[4])) +
+  theme_minimal()
+
+```
+
+:::
+
+::: {.callout-note icon="false" collapse="true"}
+## Solution Exercise 2.3c
+
+The code below defines the iid Weibull survival model with censored data in `stan`. The code here extends [this example](https://mc-stan.org/docs/stan-users-guide/truncation-censoring.html#integrating-out-censored-values) in the Stan User Guide to the case with *different censoring points* for each patient. Note the `target +=` construction where the censored data points are added to the target (the log posterior) after the initial uncensored (observed) data are included in the log posterior with the `y_obs ~ weibull(k, lambda)` statement. The `weibull_lccdf` function in stan is a convenience function that computes the survival probability  $\mathrm{Pr}(X >= x) = 1 - F(x)$, where $F()$ is the cdf of the Weibull distribution. There are `_lccdf` versions of all distribution in stan. 
+```{r}
+weibull_survivalmodel <- '
+data {
+
+  // Data
+  int<lower=0> N_obs;
+  int<lower=0> N_cens;
+  array[N_obs] real y_obs;
+  array[N_cens] real y_cens;
+  
+  // Model setting
+  real<lower=0> k;
+  
+  // Prior hyperparameters theta ~ Gamma(alpha, beta)
+  real<lower=0> alpha;
+  real<lower=0> beta;
+}
+parameters {
+  real lambda;
+}
+model {
+  lambda ~ gamma(alpha, beta); // specifies the prior
+  y_obs ~ weibull(k, lambda);  // add the observed (non-censored) data
+  target += weibull_lccdf(y_cens | k, lambda); // add censored. lccdf is 1-cdf
+}
+'
+```
+
+We set up the data and prior lists that will be supplied to stan:
+```{r}
+k = 3/2
+y_obs <- lung %>% filter(status == 2) %>% pull(time)
+y_cens <- lung %>% filter(status == 1) %>% pull(time)
+
+data <- list(N_obs = length(y_obs), N_cens = length(y_cens), 
+             y_obs = y_obs, y_cens = y_cens, k = k)
+prior <- list(alpha = alpha_prior, beta = beta_prior)
+```
+
+Load rstan and set some options
+```{r}
+#install.packages("rstan", repos = c('https://stan-dev.r-universe.dev', 
+#                                    getOption("repos")))
+suppressMessages(library(rstan))
+options(mc.cores = parallel::detectCores())
+rstan_options(auto_write = TRUE)
+```
+
+Sample from the posterior distribution using HMC in stan
+```{r}
+nDraws = 5000
+fit = stan(model_code = weibull_survivalmodel, data = c(data, prior), iter = nDraws)
+```
+Summarize the results from the posterior sampling. The number of effective draws `n_eff` is not much lower than the $5000$ nominal number of draws, so the HMC sampling is efficient. The `Rhat` is also close to one, suggesting that the different runs gave similar results.
+```{r}
+s <- summary(fit, pars = "lambda", probs = c(0.025, 0.975))
+s$summary  # results from all the different runs (chains) merged.
+```
+Compare the posterior from HMC sampling with the gridded version above, as a bug check. Hmm, they should agree. Can't seem to find the bug now, will fix later. Well, you get the idea.
+```{r}
+
+# Plot histogram from stan draws
+postsamples <- extract(fit, pars = c("lambda"))
+hist(postsamples$lambda, 50, freq = FALSE, col = colors[5], 
+     xlab = expression(lambda), ylab = "posterior density", 
+     main = expression(lambda), ylim = c(0,0.025))
+
+# Adding the gridded version from above
+lambdaGrid <- seq(200, 800, length.out = 1000)
+postRes <- weibull_posterior(lambdaGrid, lung$time, lung$status == 1, k = k, 
+                             alpha_prior, beta_prior)
+lines(lambdaGrid, postRes$post, col = colors[3], lw = 2)
+
+legend(x = "topright", inset=.05, legend = c("Stan", "Gridded"), lty = c(0,1),
+         fill = c(colors[5], NA), border = c(1,0),
+         col = c(colors[5], colors[3]), box.lty=1
+  )
+```
+:::

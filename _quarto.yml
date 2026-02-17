@@ -1,0 +1,35 @@
+project:
+  type: website
+  output-dir: docs
+
+website:
+  title: "Bayesian Learning Book"
+  navbar:
+    left:
+      - href: index.qmd
+        text: Home
+      - href: exercise_solutions.qmd
+        text: Exercises
+      - href: notebooks.qmd
+        text: Notebooks
+      - href: code.qmd
+        text: Code
+      - href: interactive.qmd
+        text: Interactive
+      - href: halloferrors.qmd
+        text: Hall of Typos
+
+format:
+  html:
+    theme:
+      light: lumen
+      dark: superhero # litera, lumen, superhero, united
+    css: styles.css
+    toc: true
+    #monobackgroundcolor: #c3d0e6
+    callout-appearance: default
+    callout-collapse: true       # all callouts collapsed by default
+filters:
+  - ref2crossref.lua
+  - texttt.lua
+

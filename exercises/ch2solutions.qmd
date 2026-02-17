@@ -1,0 +1,62 @@
+---
+title: "Chapter 2 - Single-parameter models: Exercise solutions"
+author: "Mattias Villani"
+format:
+  html: default
+  #pdf: default
+---
+
+```{r}
+#| echo: false
+#| output: false
+colors = c("#6C8EBF", "#c0a34d", "#780000","#007878","#B5C6DF","#EADAAA","#AE6666")
+```
+
+Click on the arrow to see a solution.
+
+{{< include ch2/iid_exp_conj.qmd >}}
+
+---
+
+{{< include ch2/iid_exp_survival_uncens.qmd >}}
+
+---
+
+{{< include ch2/iid_geo_conj.qmd >}}
+
+---
+
+{{< include ch2/iid_gamma2.qmd >}}
+
+---
+
+{{< include ch2/censored_normal.qmd >}}
+
+---
+
+{{< include ch2/iid_normal_derive.qmd >}}
+
+---
+
+{{< include ch2/iid_uniform.qmd >}}
+
+---
+
+
+{{< include ch2/iid_exp_survival_all.qmd >}}
+
+---
+
+{{< include ch2/normal_in_expfamily.qmd >}}
+
+---
+
+{{< include ch2/iid_weibull_survival_all.qmd >}}
+
+---
+
+{{< include ch2/iid_uniform_conj.qmd >}}
+
+---
+
+{{< include ch2/iid_poisson_ambulance.qmd >}}
